@@ -4,7 +4,8 @@ use std::{
     sync::{LazyLock, OnceLock},
 };
 
-pub mod graph;
+pub mod db;
+pub mod html;
 pub mod prelude {
     pub use tracing::{debug, error, info, trace, warn};
 }
@@ -43,6 +44,17 @@ struct Asset {
 /// content, i.e. the metadata...? Seems icky. OR! generate the hash from the SOURCE,not the
 /// generated asset. And make sure no two generated assets will ever have the same name (i.e.
 /// favicon extensions..)
+///
+///
+///
+/// SO ACTUALLY  I might not even need a graph.
+/// All assets must exist, at parsing time. We simply make one salsa query to read from relative
+/// path, which then in turn calls another salsa query to read from the cannonical path. This ensures
+/// that even though an asset is included multiple times, we only actually read it once, but we
+/// keep alsa's internal depencency graph there with the relative paths.
+///
+///
+///
 #[derive(Debug)]
 pub struct SrcPath {
     path: PathBuf,
@@ -125,6 +137,10 @@ fn config<'a>() -> &'a Config {
 
 use pulldown_cmark::{CowStr, Event, Parser, Tag};
 
+/// We actually are wrong in merging together parsing and generation. Parsing should be one query:
+/// File -> Ast(includes asset names without reading the content)
+/// Generation should be another:
+/// Ast -> Html + Assets
 pub fn md_to_chonk(md_file: MdFile) -> Chonk {
     let (html, mut assets) = {
         let options = config().md_options;
@@ -135,50 +151,33 @@ pub fn md_to_chonk(md_file: MdFile) -> Chonk {
         // Transform events: track assets and optionally modify URLs
         // I think it's best to modify the html generation to fetch the new urls from the Asset
         // collection
-        let events = parser.map(|event| {
+        let events = parser.inspect(|event| {
         match &event { // borrow event to avoid moving
             Event::Start(tag) => {
                 match tag {
-                    Tag::Image { dest_url, link_type, title, id  } => {
+                    Tag::Image { dest_url, ..  } => {
                         assets.push(dest_url.to_string());
-                        let new_url = CowStr::Boxed(dest_url.to_string().replace("old", "new").into());
-
-                        Event::Start(Tag::Image {
-                            dest_url: new_url,
-                            link_type: *link_type,
-                            title: title.clone(),
-                            id: id.clone(),
-                        })
                     }
-                    Tag::Link { dest_url, link_type, title, id  } => {
+                    Tag::Link { dest_url, ..  } => {
                         if !is_internal_link(dest_url) {
-                            return event
+                            return;
                         }
-
                         assets.push(dest_url.to_string());
-                        let new_url = CowStr::Boxed(dest_url.to_string().replace("old", "new").into());
-                        Event::Start(Tag::Link {
-                            dest_url: new_url,
-                            link_type: *link_type,
-                            title: title.clone(),
-                            id: id.clone(),
-                        })
                     }
-                    _ => event,
+                    _ => ()
                 }
             }
             Event::Html(_html) | Event::InlineHtml(_html) => {
                 warn!(
                     "HTML content found but skipped, any links or assets in HTML are not tracked."
                 );
-                event
             }
-            _ => event,
+            _ => (),
         }
     });
 
         let mut html = String::new();
-        pulldown_cmark::html::push_html(&mut html, events);
+        crate::html::push_html(&mut html, events);
         (html, assets)
     };
 
