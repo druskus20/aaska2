@@ -17,10 +17,10 @@ struct Config {
     md_options: pulldown_cmark::Options,
 }
 
-#[derive(Debug)]
-pub struct Chonk {
+#[salsa::tracked(debug)]
+pub struct Chonk<'db> {
     html: String,
-    assets: Vec<String>,
+    assets: Vec<SrcPath>,
     // other fields when we need to track metadata
     og_srcpath: SrcPath,
 }
@@ -55,14 +55,16 @@ struct Asset {
 ///
 ///
 ///
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub struct SrcPath {
     path: PathBuf,
     filename_i: usize, // includes the e
     ext_index: usize,
 }
 impl SrcPath {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn from_relaxed_path(path: PathBuf) -> Self {
+        let path = std::fs::canonicalize(&path).expect("Failed to canonicalize relaxed path");
+
         let filename_i = path
             .file_name()
             .and_then(|os_str| os_str.to_str())
@@ -109,14 +111,14 @@ impl MdFile {
     pub fn new_from_str(content: &str, filename: PathBuf) -> Self {
         MdFile {
             content: Md(content.to_string()),
-            src_path: SrcPath::new(filename),
+            src_path: SrcPath::from_relaxed_path(filename),
         }
     }
     pub fn read_from(path: PathBuf) -> Self {
         let content = std::fs::read_to_string(&path).expect("Failed to read markdown file");
         MdFile {
             content: Md(content),
-            src_path: SrcPath::new(path),
+            src_path: SrcPath::from_relaxed_path(path),
         }
     }
 }
@@ -133,65 +135,4 @@ pub fn init() {
 
 fn config<'a>() -> &'a Config {
     CONFIG.get().expect("Config not initialized")
-}
-
-use pulldown_cmark::{CowStr, Event, Parser, Tag};
-
-/// We actually are wrong in merging together parsing and generation. Parsing should be one query:
-/// File -> Ast(includes asset names without reading the content)
-/// Generation should be another:
-/// Ast -> Html + Assets
-pub fn md_to_chonk(md_file: MdFile) -> Chonk {
-    let (html, mut assets) = {
-        let options = config().md_options;
-        let mut assets = Vec::new();
-        let parser = Parser::new_ext(&md_file.content.0, options);
-
-        // Slow - alternatively, modify the html writer?
-        // Transform events: track assets and optionally modify URLs
-        // I think it's best to modify the html generation to fetch the new urls from the Asset
-        // collection
-        let events = parser.inspect(|event| {
-        match &event { // borrow event to avoid moving
-            Event::Start(tag) => {
-                match tag {
-                    Tag::Image { dest_url, ..  } => {
-                        assets.push(dest_url.to_string());
-                    }
-                    Tag::Link { dest_url, ..  } => {
-                        if !is_internal_link(dest_url) {
-                            return;
-                        }
-                        assets.push(dest_url.to_string());
-                    }
-                    _ => ()
-                }
-            }
-            Event::Html(_html) | Event::InlineHtml(_html) => {
-                warn!(
-                    "HTML content found but skipped, any links or assets in HTML are not tracked."
-                );
-            }
-            _ => (),
-        }
-    });
-
-        let mut html = String::new();
-        crate::html::push_html(&mut html, events);
-        (html, assets)
-    };
-
-    assets.sort();
-    assets.dedup();
-
-    Chonk {
-        html,
-        assets,
-        og_srcpath: md_file.src_path,
-    }
-}
-
-/// Checks whether a link is an internal link (from our website) or an external link.
-fn is_internal_link(link: &str) -> bool {
-    todo!()
 }

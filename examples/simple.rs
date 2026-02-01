@@ -6,6 +6,7 @@ fn main() {
         "# Hello, Aaska2!\nThis is a simple markdown file.\n![An example image](image-old.png)\n",
         std::path::PathBuf::from("test.md"),
     );
-    let chonk = aaska2::read_md(test_file);
+    let db = aaska2::db::LazyInputDatabase::default();
+    let chonk = aaska2::db::md_to_html(test_file);
     dbg!(chonk);
 }

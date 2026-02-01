@@ -23,8 +23,8 @@
 
 use std::collections::HashMap;
 
-use crate::Event::*;
 use pulldown_cmark::CowStr;
+use pulldown_cmark::Event::*;
 use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, Event, LinkType, Tag, TagEnd};
 use pulldown_cmark_escape::{
     FmtWriter, IoWriter, StrWrite, escape_href, escape_html, escape_html_body_text,

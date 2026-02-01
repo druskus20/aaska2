@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{Chonk, SrcPath, prelude::*};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -22,18 +22,15 @@ struct File {
 
 #[salsa::db]
 #[derive(Clone)]
-struct LazyInputDatabase {
+pub struct LazyInputDatabase {
     storage: Storage<Self>,
     #[cfg(test)]
     logs: Arc<Mutex<Vec<String>>>,
     in_mem_assets: DashMap<SrcPath, File>,
-    parsed_md_cache: DashMap<ParsedMdHash, Vec<Event<'static>>>,
     file_watcher: Arc<Mutex<Debouncer<RecommendedWatcher>>>,
 }
 
 /// Source of an asset, a path, not loaded, with a cannonical path
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct SrcPath(PathBuf);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ParsedMdHash(Vec<u8>);
@@ -42,21 +39,12 @@ impl Deref for SrcPath {
     type Target = PathBuf;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl SrcPath {
-    fn from_relaxed_path(path: PathBuf) -> Self {
-        let canonical_path = path
-            .canonicalize()
-            .expect("Relaxed path cannot be canonicalized");
-        SrcPath(canonical_path)
+        &self.path
     }
 }
 
 impl LazyInputDatabase {
-    fn new(tx: Sender<DebounceEventResult>) -> Self {
+    pub fn new(tx: Sender<DebounceEventResult>) -> Self {
         let logs: Arc<Mutex<Vec<String>>> = Default::default();
         Self {
             storage: Storage::new(Some(Box::new({
@@ -74,7 +62,6 @@ impl LazyInputDatabase {
             file_watcher: Arc::new(Mutex::new(
                 new_debouncer(Duration::from_secs(1), tx).unwrap(),
             )),
-            parsed_md_cache: DashMap::new(),
         }
     }
 }
@@ -85,7 +72,6 @@ impl salsa::Database for LazyInputDatabase {}
 #[salsa::db]
 trait Db: salsa::Database {
     fn input(&self, path: SrcPath) -> Result<File>;
-    fn register_parsed_md(&self, hash: ParsedMdHash, md: Vec<Event<'static>>);
 }
 
 #[salsa::db]
@@ -108,10 +94,6 @@ impl Db for LazyInputDatabase {
                 *entry.insert(File::new(self, path, contents))
             }
         })
-    }
-
-    fn register_parsed_md(&self, hash: ParsedMdHash, md: Vec<Event<'static>>) {
-        self.parsed_md_cache.entry(hash).or_insert_with(|| md);
     }
 }
 
@@ -157,11 +139,10 @@ fn process_asset(db: &dyn Db, input: File) -> ProcessedAsset<'_> {
 }
 
 #[salsa::tracked]
-fn parse_md(db: &dyn Db, md_file: File) -> ParsedMd<'_> {
+pub fn md_to_html(db: &dyn Db, md_file: File) -> Chonk<'_> {
     let options = crate::config().md_options;
     let mut assets = Vec::new();
     let file_contents = md_file.contents(db);
-    let file_content_hash = hash_md(db, &file_contents);
     let mut parser = Parser::new_ext(&file_contents, options);
 
     // Slow - alternatively, modify the html writer?
@@ -191,11 +172,11 @@ fn parse_md(db: &dyn Db, md_file: File) -> ParsedMd<'_> {
             _ => (),
         }
     });
-    let parsed_md: Vec<Event> = parser.collect();
 
-    db.register_parsed_md(file_content_hash.clone(), parsed_md.clone());
+    let mut html = String::new();
+    crate::html::push_html(&mut html, events);
 
-    ParsedMd::new(db, file_content_hash, assets)
+    Chonk::new(db, html, assets, md_file.path(db))
 }
 
 /// Checks whether a link is an internal link (from our website) or an external link.
