@@ -14,11 +14,13 @@ use pulldown_cmark::{Event, Parser, Tag};
 use salsa::{Accumulator, Setter, Storage};
 
 #[salsa::input]
-struct File {
+pub struct File {
     path: SrcPath,
     #[returns(ref)]
     contents: String,
 }
+
+pub type Database = LazyInputDatabase;
 
 #[salsa::db]
 #[derive(Clone)]
@@ -34,14 +36,6 @@ pub struct LazyInputDatabase {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ParsedMdHash(Vec<u8>);
-
-impl Deref for SrcPath {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.path
-    }
-}
 
 impl LazyInputDatabase {
     pub fn new(tx: Sender<DebounceEventResult>) -> Self {
@@ -70,7 +64,7 @@ impl LazyInputDatabase {
 impl salsa::Database for LazyInputDatabase {}
 
 #[salsa::db]
-trait Db: salsa::Database {
+pub trait Db: salsa::Database {
     fn input(&self, path: SrcPath) -> Result<File>;
 }
 
@@ -139,7 +133,7 @@ fn process_asset(db: &dyn Db, input: File) -> ProcessedAsset<'_> {
 }
 
 #[salsa::tracked]
-pub fn md_to_html(db: &dyn Db, md_file: File) -> Chonk<'_> {
+pub fn render_chonk(db: &dyn Db, md_file: File) -> Chonk<'_> {
     let options = crate::config().md_options;
     let mut assets = Vec::new();
     let file_contents = md_file.contents(db);
