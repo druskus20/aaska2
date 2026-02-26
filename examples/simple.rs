@@ -13,5 +13,7 @@ fn main() {
         ),
     );
 
-    aaska2::db::render_chonk(&db, test_file);
+    let chonk = aaska2::db::render_chonk(&db, test_file);
+    dbg!(chonk);
+    dbg!(chonk.html(&db));
 }

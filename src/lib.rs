@@ -18,10 +18,10 @@ struct Config {
 
 #[salsa::tracked(debug)]
 pub struct Chonk<'db> {
-    html: String,
-    assets: Vec<SrcPath>,
+    pub html: String,
+    pub assets: Vec<SrcPath>,
     // other fields when we need to track metadata
-    og_srcpath: SrcPath,
+    pub og_srcpath: SrcPath,
 }
 
 struct Asset {
