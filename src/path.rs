@@ -1,22 +1,40 @@
-use crate::prelude::*;
+use crate::internal_prelude::*;
 use std::{
     ops::Deref,
     path::{Component, Path, PathBuf},
 };
 
-#[derive(Debug, Eq, PartialEq, Clone, Hash)]
+pub enum SourcePath {
+    Relative { anchor: String, rel_path: String },
+    Absolute(String),
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SrcPath {
     path: PathBuf,
+    anchor_i: usize, // can be 0 if no anchor, otherwise it's the index of the relative path start
     filename_i: usize, // includes the e
-    ext_index: usize,
+    ext_i: usize,
 }
 impl SrcPath {
-    pub fn from_relaxed_path(path: impl AsRef<Path>) -> Self {
-        eprintln!("Pwd: {:?}", std::env::current_dir());
-        eprintln!("Relaxed path: {:?}", path.as_ref());
-        let pwd = std::env::current_dir().expect("Failed to get current working directory");
-        let path = crate::path::soft_cannonicalize(&path, &pwd);
-        eprintln!("Canonicalized path: {:?}", path);
+    pub fn from_relaxed_path(path: impl AsRef<Path>, anchor: impl AsRef<Path>) -> Self {
+        let anchor_i = if path.as_ref().is_absolute() && anchor.as_ref().as_os_str().is_empty() {
+            0
+        } else if path.as_ref().is_relative() && !anchor.as_ref().as_os_str().is_empty() {
+            anchor.as_ref().to_str().unwrap().len()
+        } else {
+            panic!(
+                "Invalid path and anchor combination: path must be absolute if anchor is empty, and relative if anchor is non-empty"
+            );
+        };
+
+        // remove any possible "./" and join
+        let path = if anchor_i > 0 {
+            let joined = anchor.as_ref().join(path.as_ref());
+            normalize_path(joined)
+        } else {
+            normalize_path(path)
+        };
 
         let filename_i = path
             .file_name()
@@ -37,18 +55,24 @@ impl SrcPath {
 
         SrcPath {
             path,
+            anchor_i,
             filename_i,
-            ext_index,
+            ext_i: ext_index,
         }
+    }
+    /// Returns a string representation of the path up to the filename, which can be used as an
+    /// anchor for resolving relative paths.
+    pub fn as_anchor(&self) -> &str {
+        &self.path.to_str().unwrap()[..self.filename_i]
     }
     pub fn filename(&self) -> &str {
         &self.path.to_str().unwrap()[self.filename_i..]
     }
     pub fn filename_no_ext(&self) -> &str {
-        &self.path.to_str().unwrap()[self.filename_i..self.ext_index]
+        &self.path.to_str().unwrap()[self.filename_i..self.ext_i]
     }
     pub fn ext(&self) -> &str {
-        &self.path.to_str().unwrap()[self.ext_index..]
+        &self.path.to_str().unwrap()[self.ext_i..]
     }
 }
 
@@ -60,12 +84,18 @@ impl Deref for SrcPath {
     }
 }
 
+impl AsRef<Path> for SrcPath {
+    fn as_ref(&self) -> &Path {
+        self.path.as_path()
+    }
+}
+
 // https://github.com/rust-lang/cargo/blob/e490fd421fd85efd5cd31a4aacbd0bb42a567d3e/crates/cargo-util/src/paths.rs#L84
 // - Does not fail on invalid paths like std::fs::canonicalize
 // - Does not resolve symlinks
 // - Collapses `.` and `..` components
 // - Does not access the filesystem (faster)
-fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
+pub fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
     let mut components = path.as_ref().components().peekable();
     let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
         components.next();
@@ -105,13 +135,16 @@ fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
 /// - does not resolve symlinks
 /// - does not fail on invalid or non-existent paths
 /// - does not access the filesystem
-pub fn soft_cannonicalize(path: impl AsRef<Path>, pwd: &Path) -> PathBuf {
+pub fn soft_cannonicalize_rel(path: impl AsRef<Path>, pwd: impl AsRef<Path>) -> PathBuf {
     let path = if path.as_ref().is_absolute() {
         path.as_ref().to_path_buf()
     } else {
-        pwd.join(path.as_ref())
+        pwd.as_ref().join(path.as_ref())
     };
     normalize_path(path)
+}
+pub fn soft_cannonicalize_cwd(path: impl AsRef<Path>) -> PathBuf {
+    soft_cannonicalize_rel(path, std::env::current_dir().unwrap())
 }
 
 #[cfg(test)]

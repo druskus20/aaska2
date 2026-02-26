@@ -3,10 +3,11 @@ use std::sync::OnceLock;
 pub mod db;
 pub mod html;
 pub mod path;
-pub mod prelude {
+pub(crate) mod internal_prelude {
     pub use tracing::{debug, error, info, trace, warn};
 }
-pub use prelude::*;
+
+pub mod prelude {}
 
 use crate::path::SrcPath;
 
@@ -16,8 +17,9 @@ struct Config {
     md_options: pulldown_cmark::Options,
 }
 
-#[salsa::tracked(debug)]
-pub struct Chonk<'db> {
+// Chonk is now a regular struct returned by render_chonk
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Chonk {
     pub html: String,
     pub assets: Vec<SrcPath>,
     // other fields when we need to track metadata
@@ -28,7 +30,6 @@ struct Asset {
     og_uri: String,
 }
 
-// Global config
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
 pub fn init() {

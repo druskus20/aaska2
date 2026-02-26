@@ -27,3 +27,8 @@ should in theory be easier.
 - the database needs to track the dependencies though, otherwise we cannot
   know what to invalidate. This requires either reflection or macros. And i dont 
   really want to do either.
+
+
+## Update 
+
+In the end, picante forked to use serde is the way to go

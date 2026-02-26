@@ -35,12 +35,15 @@ enum TableState {
     Body,
 }
 
-struct HtmlWriter<'a, I, W> {
+struct HtmlWriter<'a, I, W, F = fn(&str) -> String> {
     /// Iterator supplying events.
     iter: I,
 
     /// Writer to write to.
     writer: W,
+
+    /// URL resolver for transforming asset URLs
+    url_resolver: Option<F>,
 
     /// Whether or not the last write wrote a newline.
     end_newline: bool,
@@ -54,15 +57,22 @@ struct HtmlWriter<'a, I, W> {
     numbers: HashMap<CowStr<'a>, usize>,
 }
 
-impl<'a, I, W> HtmlWriter<'a, I, W>
+// Identity function for when no URL resolution is needed
+fn identity_resolver(url: &str) -> String {
+    url.to_string()
+}
+
+impl<'a, I, W, F> HtmlWriter<'a, I, W, F>
 where
     I: Iterator<Item = Event<'a>>,
     W: StrWrite,
+    F: Fn(&str) -> String,
 {
-    fn new(iter: I, writer: W) -> Self {
+    fn new_with_resolver(iter: I, writer: W, url_resolver: F) -> Self {
         Self {
             iter,
             writer,
+            url_resolver: Some(url_resolver),
             end_newline: true,
             in_non_writing_block: false,
             table_state: TableState::Head,
@@ -348,7 +358,12 @@ where
                 id: _,
             } => {
                 self.write("<a href=\"")?;
-                escape_href(&mut self.writer, &dest_url)?;
+                let resolved_url = if let Some(ref resolver) = self.url_resolver {
+                    resolver(&dest_url)
+                } else {
+                    dest_url.to_string()
+                };
+                escape_href(&mut self.writer, &resolved_url)?;
                 if !title.is_empty() {
                     self.write("\" title=\"")?;
                     escape_html(&mut self.writer, &title)?;
@@ -362,7 +377,12 @@ where
                 id: _,
             } => {
                 self.write("<img src=\"")?;
-                escape_href(&mut self.writer, &dest_url)?;
+                let resolved_url = if let Some(ref resolver) = self.url_resolver {
+                    resolver(&dest_url)
+                } else {
+                    dest_url.to_string()
+                };
+                escape_href(&mut self.writer, &resolved_url)?;
                 self.write("\" alt=\"")?;
                 self.raw_text()?;
                 if !title.is_empty() {
@@ -552,7 +572,7 @@ pub fn push_html<'a, I>(s: &mut String, iter: I)
 where
     I: Iterator<Item = Event<'a>>,
 {
-    write_html_fmt(s, iter).unwrap()
+    push_html_with_resolver(s, iter, identity_resolver)
 }
 
 /// Iterate over an `Iterator` of `Event`s, generate HTML for each `Event`, and
@@ -593,7 +613,7 @@ where
     I: Iterator<Item = Event<'a>>,
     W: std::io::Write,
 {
-    HtmlWriter::new(iter, IoWriter(writer)).run()
+    HtmlWriter::new_with_resolver(iter, IoWriter(writer), identity_resolver).run()
 }
 
 /// Iterate over an `Iterator` of `Event`s, generate HTML for each `Event`, and
@@ -628,5 +648,17 @@ where
     I: Iterator<Item = Event<'a>>,
     W: std::fmt::Write,
 {
-    HtmlWriter::new(iter, FmtWriter(writer)).run()
+    HtmlWriter::new_with_resolver(iter, FmtWriter(writer), identity_resolver).run()
+}
+
+/// Iterate over an `Iterator` of `Event`s, generate HTML for each `Event`, and
+/// push it to a `String`, using a URL resolver to transform asset URLs.
+pub fn push_html_with_resolver<'a, I, F>(s: &mut String, iter: I, url_resolver: F)
+where
+    I: Iterator<Item = Event<'a>>,
+    F: Fn(&str) -> String,
+{
+    HtmlWriter::new_with_resolver(iter, FmtWriter(s), url_resolver)
+        .run()
+        .unwrap()
 }
