@@ -20,10 +20,20 @@ rayon = "1.10"
 picante = { path = "../picante/crates/picante" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1.0", features = ["derive"] }
+futures = "0.3"
+lazy_static = "1.4"
 
 [[example]]
 name = "parallel_test"
 path = "examples/parallel_test.rs"
+
+[[example]]
+name = "parallel_stress"
+path = "examples/parallel_stress.rs"
+
+[[example]]
+name = "incremental_test"
+path = "examples/incremental_test.rs"
 
 [[example]]
 name = "parallel_manual"
