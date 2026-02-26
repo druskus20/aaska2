@@ -16,8 +16,9 @@ struct Config {
     md_options: pulldown_cmark::Options,
 }
 
-#[salsa::tracked(debug)]
-pub struct Chonk<'db> {
+// Chonk is now a regular struct returned by render_chonk
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Chonk {
     pub html: String,
     pub assets: Vec<SrcPath>,
     // other fields when we need to track metadata

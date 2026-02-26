@@ -11,66 +11,38 @@ use eyre::{Context, Report, Result, eyre};
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use pulldown_cmark::{Event, Parser, Tag};
-use salsa::{Accumulator, Setter, Storage};
+use picante::PicanteResult;
 
-#[salsa::input]
+#[picante::input]
 pub struct File {
+    #[key]
     path: SrcPath,
-    #[returns(ref)]
     contents: String,
-}
-
-pub type Database = LazyInputDatabase;
-
-#[salsa::db]
-#[derive(Clone)]
-pub struct LazyInputDatabase {
-    storage: Storage<Self>,
-    #[cfg(test)]
-    logs: Arc<Mutex<Vec<String>>>,
-    in_mem_assets: DashMap<SrcPath, File>,
-    file_watcher: Arc<Mutex<Debouncer<RecommendedWatcher>>>,
 }
 
 /// Source of an asset, a path, not loaded, with a cannonical path
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 struct ParsedMdHash(Vec<u8>);
 
-impl LazyInputDatabase {
-    pub fn new(tx: Sender<DebounceEventResult>) -> Self {
-        let logs: Arc<Mutex<Vec<String>>> = Default::default();
-        Self {
-            storage: Storage::new(Some(Box::new({
-                let logs = logs.clone();
-                move |event| {
-                    // don't log boring events
-                    if let salsa::EventKind::WillExecute { .. } = event.kind {
-                        logs.lock().unwrap().push(format!("{event:?}"));
-                    }
-                }
-            }))),
-            #[cfg(test)]
-            logs,
-            in_mem_assets: DashMap::new(),
-            file_watcher: Arc::new(Mutex::new(
+// Picante database with custom fields for file watching and caching
+#[picante::db(inputs(File), tracked(render_chonk, process_asset, process_md))]
+pub struct Database {
+    pub in_mem_assets: DashMap<SrcPath, File>,
+    pub file_watcher: Arc<Mutex<Debouncer<RecommendedWatcher>>>,
+}
+
+impl Database {
+    pub fn new_with_watcher(tx: Sender<DebounceEventResult>) -> Self {
+        Self::new(
+            DashMap::new(),
+            Arc::new(Mutex::new(
                 new_debouncer(Duration::from_secs(1), tx).unwrap(),
             )),
-        }
+        )
     }
-}
 
-#[salsa::db]
-impl salsa::Database for LazyInputDatabase {}
-
-#[salsa::db]
-pub trait Db: salsa::Database {
-    fn input(&self, path: SrcPath) -> Result<File>;
-}
-
-#[salsa::db]
-impl Db for LazyInputDatabase {
-    fn input(&self, path: SrcPath) -> Result<File> {
+    pub fn input(&self, path: SrcPath) -> Result<File> {
         Ok(match self.in_mem_assets.entry(path.clone()) {
             Entry::Occupied(entry) => *entry.get(),
             // If we haven't read this file yet set up the watch, read the
@@ -85,13 +57,13 @@ impl Db for LazyInputDatabase {
                     .unwrap();
                 let contents = std::fs::read_to_string(&*path)
                     .wrap_err_with(|| format!("Failed to read {}", &path.display()))?;
-                *entry.insert(File::new(self, path, contents))
+                *entry.insert(File::new(self, path, contents)?)
             }
         })
     }
 }
 
-fn hash_md(db: &dyn Db, md: &String) -> ParsedMdHash {
+fn hash_md(md: &String) -> ParsedMdHash {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(md.as_bytes());
@@ -99,44 +71,38 @@ fn hash_md(db: &dyn Db, md: &String) -> ParsedMdHash {
     ParsedMdHash(result.to_ascii_lowercase())
 }
 
-#[salsa::accumulator]
-struct Diagnostic(String);
-
-impl Diagnostic {
-    fn push_error(db: &dyn Db, file: File, error: Report) {
-        Diagnostic(format!(
-            "Error in file {}: {:?}\n",
-            file.path(db)
-                .file_name()
-                .unwrap_or_else(|| "<unknown>".as_ref())
-                .to_string_lossy(),
-            error,
-        ))
-        .accumulate(db);
-    }
+// Diagnostic accumulator replaced with simple logging
+fn log_error(file: File, db: &Database, err: Report) {
+    let filename = file.path(db)
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "<unknown>".to_string());
+    error!("Error in file {}: {:?}", filename, err);
 }
 
-#[salsa::tracked]
-struct ProcessedAsset<'db> {
+// ProcessedAsset is now a regular struct
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+struct ProcessedAsset {
     name: String,
 }
 
-#[salsa::tracked]
-struct ParsedMd<'db> {
+// ParsedMd is now a regular struct
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+struct ParsedMd {
     parsed_md_hash: ParsedMdHash,
     assets: Vec<SrcPath>,
 }
 
-#[salsa::tracked]
-fn process_asset(db: &dyn Db, input: File) -> ProcessedAsset<'_> {
+#[picante::tracked]
+async fn process_asset<DB: DatabaseTrait>(db: &DB, input: File) -> PicanteResult<ProcessedAsset> {
     todo!()
 }
 
-#[salsa::tracked]
-pub fn render_chonk(db: &dyn Db, md_file: File) -> Chonk<'_> {
+#[picante::tracked]
+pub async fn render_chonk<DB: DatabaseTrait>(db: &DB, md_file: File) -> PicanteResult<Chonk> {
     let options = crate::config().md_options;
     let mut assets = Vec::new();
-    let file_contents = md_file.contents(db);
+    let file_contents = md_file.contents(db)?;
     let mut parser = Parser::new_ext(&file_contents, options);
 
     // Slow - alternatively, modify the html writer?
@@ -170,7 +136,11 @@ pub fn render_chonk(db: &dyn Db, md_file: File) -> Chonk<'_> {
     let mut html = String::new();
     crate::html::push_html(&mut html, events);
 
-    Chonk::new(db, html, assets, md_file.path(db))
+    Ok(Chonk {
+        html,
+        assets,
+        og_srcpath: (*md_file.path(db)?).clone(),
+    })
 }
 
 /// Checks whether a link is an internal link (from our website) or an external link.
@@ -178,7 +148,7 @@ fn is_internal_link(link: &str) -> bool {
     todo!()
 }
 
-#[salsa::tracked]
-fn process_md<'db>(db: &'db dyn Db, md: ParsedMd<'db>) -> ParsedMd<'db> {
+#[picante::tracked]
+async fn process_md<DB: DatabaseTrait>(db: &DB, md: ParsedMd) -> PicanteResult<ParsedMd> {
     todo!()
 }
