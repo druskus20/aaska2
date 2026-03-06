@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 #[command(about = "A static site generator", long_about = None)]
 pub struct Args {
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 
     /// Increase verbosity level (-v for Info, -vv for Debug, -vvv for Trace)
     #[arg(short = 'v',  action = clap::ArgAction::Count)]
@@ -13,8 +13,8 @@ pub struct Args {
 }
 
 impl Args {
-    pub fn command(&self) -> Command {
-        self.command.clone().unwrap_or(Command::Run { path: None })
+    pub fn command(&self) -> &Command {
+        &self.command
     }
     pub fn log_level(&self) -> tracing::Level {
         match self.verbosity {
@@ -28,10 +28,10 @@ impl Args {
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum Command {
-    #[command(about = "Run the Aaska development server (default)")]
+    #[command(about = "Run aaska to generate the static site")]
     Run {
-        #[arg(short, long, help = "Path to the config file (optional)")]
-        path: Option<String>,
+        #[arg(short, long, help = "Root path")]
+        root: Option<String>,
     },
 }
 

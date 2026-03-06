@@ -37,8 +37,8 @@ async fn main() {
     aaska2::init();
 
     match cli.command() {
-        cli::Command::Run { path } => {
-            let path = path.unwrap_or_else(|| {
+        cli::Command::Run { root } => {
+            let path = root.clone().unwrap_or_else(|| {
                 std::env::current_dir()
                     .expect_tracing("Failed to get current directory")
                     .to_str()
@@ -52,7 +52,7 @@ async fn main() {
 
 fn run(path: &str) -> Result<()> {
     info!("Run");
-    let base_paths = compute_aaska_paths(&path);
+    let base_paths = compute_aaska_paths(path);
     if !base_paths.are_valid() {
         bail!("Invalid base paths");
     }
