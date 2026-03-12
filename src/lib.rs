@@ -3,7 +3,9 @@ use std::sync::OnceLock;
 pub mod db;
 pub mod html;
 pub mod path;
+pub mod path2;
 pub(crate) mod internal_prelude {
+    pub use eyre::{Context, Result, WrapErr, bail, eyre};
     pub use tracing::{debug, error, info, trace, warn};
 }
 

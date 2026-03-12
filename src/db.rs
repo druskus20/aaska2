@@ -114,7 +114,8 @@ pub async fn render_chonk<DB: Db>(db: &DB, md_file: SourceFile) -> PicanteResult
                 Tag::Image { dest_url, .. } => {
                     let original_url = dest_url.to_string();
                     let asset_path =
-                        SrcPath::from_relaxed_path(PathBuf::from(dest_url.as_ref()), anchor_path);
+                        SrcPath::from_relaxed_path(PathBuf::from(dest_url.as_ref()), anchor_path)
+                            .unwrap();
                     assets.push(asset_path.clone());
                     asset_url_map.push((original_url, asset_path));
                 }
@@ -123,8 +124,10 @@ pub async fn render_chonk<DB: Db>(db: &DB, md_file: SourceFile) -> PicanteResult
                         continue;
                     }
                     let original_url = dest_url.to_string();
+                    dbg!(dest_url.as_ref());
                     let asset_path =
-                        SrcPath::from_relaxed_path(PathBuf::from(dest_url.as_ref()), anchor_path);
+                        SrcPath::from_relaxed_path(PathBuf::from(dest_url.as_ref()), anchor_path)
+                            .unwrap();
                     assets.push(asset_path.clone());
                     asset_url_map.push((original_url, asset_path));
                 }
@@ -227,12 +230,23 @@ pub async fn render_chonk<DB: Db>(db: &DB, md_file: SourceFile) -> PicanteResult
 /// Checks whether a link is an internal link (from our website) or an external link.
 /// If it's an internal link, it is a depencency
 fn is_internal_link(link: &str) -> bool {
-    todo!()
+    // TODO:
+    // For now, simple heuristic.
+    // However, I believe i should check the domain to see if it's the same as our site, the URL
+    // might have changed and might have to be regenerated.
+    !(link.starts_with("http://") || link.starts_with("https://"))
 }
 
+/// Render md and trigger asset processing, returning a Chonk with HTML and asset dependencies.
+/// Assets are processed in parallel.
 #[picante::tracked]
 pub async fn process_md<DB: Db>(db: &DB, input: SourceFile) -> PicanteResult<ParsedMd> {
-    todo!()
+    let chonk = render_chonk(db, input).await?;
+    let parsed_md_hash = hash_md(&chonk.html.as_bytes());
+    Ok(ParsedMd {
+        parsed_md_hash,
+        assets: chonk.assets,
+    })
 }
 
 #[picante::tracked]

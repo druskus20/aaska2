@@ -32,15 +32,3 @@ path = "src/lib.rs"
 [[bin]]
 name = "aaska2"
 path = "src/aaska-bin/main.rs"
-
-[[example]]
-name = "parallel_test"
-path = "examples/parallel_test.rs"
-
-[[example]]
-name = "parallel_stress"
-path = "examples/parallel_stress.rs"
-
-[[example]]
-name = "incremental_test"
-path = "examples/incremental_test.rs"

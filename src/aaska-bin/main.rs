@@ -5,6 +5,7 @@ mod prelude {
 }
 use std::path::Path;
 
+use aaska2::db::AaskaDb;
 use prelude::*;
 
 use eyre::{Context, Result, bail};
@@ -45,22 +46,27 @@ async fn main() {
                     .expect_tracing("Failed to convert current directory to string")
                     .to_string()
             });
-            run(&path).expect_tracing("Failed to run Aaska")
+            run(&path).await.expect_tracing("Failed to run Aaska")
         }
     }
 }
 
-fn run(path: &str) -> Result<()> {
+async fn run(path: &str) -> Result<()> {
     info!("Run");
     let base_paths = compute_aaska_paths(path);
     if !base_paths.are_valid() {
         bail!("Invalid base paths");
     }
 
-    let _db = aaska2::db::AaskaDb::new_simple();
+    let db = aaska2::db::AaskaDb::new_simple();
     let md_files = glob(base_paths.content, "**/*.md")?;
 
-    dbg!(md_files);
+    for f in md_files {
+        dbg!(&f);
+        let src_path = aaska2::path::SrcPath::from_relaxed_path(&f, "").unwrap(); // WRONG PROBABLY
+        let src_f = aaska2::db::SourceFile::from_disk(&db, src_path)?;
+        let md = aaska2::db::process_md(&db, src_f).await;
+    }
 
     Ok(())
 }
